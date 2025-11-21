@@ -27,7 +27,8 @@ CENSUS_API_KEY = os.getenv("CENSUS_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 BLENDED_TRANSACTIONS_THRESHOLD = 10000
 POP_DENSITY_THRESHOLD = 400
-MIN_DAILY_HOURS = 10  # Minimum daily operating hours filter
+REMOVAL_RATE_THRESHOLD= 0.4
+MIN_DAILY_HOURS = 12
 
 # --------------------------------------------------
 # GOOGLE PLACE TYPES TO SEARCH
@@ -44,64 +45,13 @@ PLACE_TYPES = [
     "restaurant",
 ]
 
-# --------------------------------------------------
-# Fetch population for a ZIP from Census
-# --------------------------------------------------
-def get_population(zip_code):
-    """
-    Fetches population for a given ZIP code from Census ACS API.
-    Returns population count or 0 if error.
-    """
-    try:
-        url = (
-            "https://api.census.gov/data/2020/acs/acs5?"
-            "get=B01003_001E,NAME"
-            f"&for=zip%20code%20tabulation%20area:{zip_code}"
-            f"&key={CENSUS_API_KEY}"
-        )
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        
-        if len(data) > 1:
-            population = int(data[1][0]) if data[1][0] else 0
-            return population
-        return 0
-    except Exception as e:
-        st.write(f"⚠️ Population fetch error for ZIP `{zip_code}`: {str(e)}")
-        return 0
-
 # ----------------------------- 
-# Function to Fetch Area from Census GeoInfo API
+# Function to Fetch Latitude and Longitude from Zippopotam API
 # ----------------------------- 
-def get_area(zip_code):
+def get_lat_long(zip_code):
     """
-    Fetches land area in square miles from Census GeoInfo API.
-    Returns area in sq mi or 0 if error.
-    """
-    try:
-        url = (
-            "https://api.census.gov/data/2023/geoinfo?"
-            "get=AREALAND_SQMI,AREALAND,INTPTLAT,INTPTLON,NAME"
-            f"&for=zip%20code%20tabulation%20area:{zip_code}"
-        )
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        
-        if len(data) > 1:
-            area_sqmi = float(data[1][0]) if data[1][0] else 0
-            return area_sqmi
-        return 0
-    except Exception as e:
-        st.write(f"⚠️ Area fetch error for ZIP `{zip_code}`: {str(e)}")
-        return 0
-
-# ----------------------------- 
-# Function to Fetch City and State from Zippopotam API
-# ----------------------------- 
-def get_city_state(zip_code):
-    """
-    Fetches city and state from Zippopotam API.
-    Returns tuple (city, state, latitude, longitude) or ("Unknown", "Unknown", "Unknown", "Unknown") if error.
+    Fetches latitude and longitude from Zippopotam API.
+    Returns tuple (latitude, longitude) or ("Unknown", "Unknown") if error.
     """
     try:
         url = f"https://api.zippopotam.us/us/{zip_code}"
@@ -109,43 +59,27 @@ def get_city_state(zip_code):
         data = response.json()
         
         if "places" in data and len(data["places"]) > 0:
-            city = data["places"][0].get("place name", "Unknown")
-            state = data["places"][0].get("state abbreviation", "Unknown")
             latitude = data["places"][0].get("latitude", "Unknown")
             longitude = data["places"][0].get("longitude", "Unknown")
-            return city, state, latitude, longitude
-        return "Unknown", "Unknown", "Unknown", "Unknown" 
+            return latitude, longitude
+        return "Unknown", "Unknown" 
     except Exception as e:
         st.write(f"⚠️ City/State fetch error for ZIP `{zip_code}`: {str(e)}")
-        return "Unknown", "Unknown", "Unknown", "Unknown"
+        return "Unknown", "Unknown"
 
 # ----------------------------- 
 # Function to Fetch All Data for a ZIP Code
 # ----------------------------- 
-def fetch_zip_data(zip_code):
-    """
-    Fetches population, area, city, and state for a ZIP code.
-    Returns dictionary with all data.
-    """
-    population = get_population(zip_code)
-    area = get_area(zip_code)
-    city, state, latitude, longitude = get_city_state(zip_code)
-    
-    # Calculate population density
-    pop_density = round(population / area, 2) if area > 0 else 0
-    
+def fetch_zip_data(zip_code, row):
+    latitude, longitude = get_lat_long(zip_code)
+
     return {
-        "Population": population,
-        "Area_SqMi": area,
-        "Pop_Density": pop_density,
-        "City": city,
-        "State": state,
         "Latitude": latitude,
         "Longitude": longitude
     }
 
 # --------------------------------------------------
-# NEW: Fetch Bitcoin ATMs/businesses for a location (DISPLAY ONLY - NO DETAILS)
+# Fetch Bitcoin ATMs/businesses for a location (DISPLAY ONLY - NO DETAILS)
 # --------------------------------------------------
 def get_bitcoin_locations(lat, lng, radius=1600):
     """
@@ -293,18 +227,16 @@ if uploaded_file:
     df = pd.read_excel(uploaded_file)
     
     st.markdown("### 📋 Uploaded ZIP Code Preview")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width='stretch')
     
     # Validate ZIP code column exists
     if "zip_code" not in df.columns:
         st.error("❌ Excel must contain a 'zip_code' column.")
         st.stop()
     
-    # Keep only the zip_code column for processing
-    df_processed = df[["zip_code"]].copy()
-    
-    # Ensure 5-digit zero-padded ZIP codes
+    df_processed = df.copy()
     df_processed["zip_code"] = df_processed["zip_code"].astype(str).str.zfill(5)
+
     
     # Fetch data for each ZIP code
     st.info("📡 Fetching population, area, city, and state for each ZIP code...")
@@ -313,16 +245,13 @@ if uploaded_file:
     total_zips = len(df_processed)
     
     results = []
-    for idx, zip_code in enumerate(df_processed["zip_code"]):
-        zip_data = fetch_zip_data(zip_code)
-        
+    for idx, row in df_processed.iterrows():
+        zip_code = row["zip_code"]
+        zip_data = fetch_zip_data(zip_code, row)
         results.append(zip_data)
-        
-        # Update progress
         progress_bar.progress((idx + 1) / total_zips)
-        
-        # Add small delay to avoid rate limiting
         time.sleep(0.2)
+
     
     progress_bar.empty()
     
@@ -335,8 +264,9 @@ if uploaded_file:
     # 2. Population Density >= POP_DENSITY_THRESHOLD
     
     df_processed["Qualified"] = (
-        (df_processed["Population"] >= BLENDED_TRANSACTIONS_THRESHOLD) &
-        (df_processed["Pop_Density"] >= POP_DENSITY_THRESHOLD)
+        (df_processed["Blended Pop Estimate"] >= BLENDED_TRANSACTIONS_THRESHOLD) &
+        (df_processed["Pop Density"] >= POP_DENSITY_THRESHOLD) &
+        (df_processed["Removal Rate"] <= REMOVAL_RATE_THRESHOLD)
     )
     
     # Detailed rejection reasons
@@ -344,10 +274,12 @@ if uploaded_file:
         if row["Qualified"]:
             return ""
         reasons = []
-        if row["Population"] < BLENDED_TRANSACTIONS_THRESHOLD:
-            reasons.append(f"Low blended transactions/population ({row['Population']} < {BLENDED_TRANSACTIONS_THRESHOLD})")
-        if row["Pop_Density"] < POP_DENSITY_THRESHOLD:
-            reasons.append(f"Low density ({row['Pop_Density']} < {POP_DENSITY_THRESHOLD})")
+        if row["Blended Pop Estimate"] < BLENDED_TRANSACTIONS_THRESHOLD:
+            reasons.append("Low blended transactions")
+        if row["Pop Density"] < POP_DENSITY_THRESHOLD:
+            reasons.append("Low population density")
+        if row["Removal Rate"] >= 0.4:
+            reasons.append("High kiosk removal rate")
         return " | ".join(reasons)
     
     df_processed["RejectedReason"] = df_processed.apply(get_rejection_reason, axis=1)
@@ -362,7 +294,7 @@ if uploaded_file:
     
     with tab1:
         st.success(f"Qualified Leads: {len(qualified)}")
-        st.dataframe(qualified, use_container_width=True)
+        st.dataframe(qualified, width='stretch')
         
         # Download button
         csv = qualified.to_csv(index=False)
@@ -375,7 +307,7 @@ if uploaded_file:
     
     with tab2:
         st.warning(f"Rejected Leads: {len(rejected)}")
-        st.dataframe(rejected, use_container_width=True)
+        st.dataframe(rejected, width='stretch')
         
         # Download button
         csv = rejected.to_csv(index=False)
@@ -395,8 +327,8 @@ if uploaded_file:
     total = len(df_processed)
     approved = len(qualified)
     rejection_rate = round((total - approved) / total * 100, 2) if total > 0 else 0
-    avg_population = int(df_processed["Population"].mean()) if total > 0 else 0
-    avg_density = round(df_processed["Pop_Density"].mean(), 2) if total > 0 else 0
+    avg_population = int(df_processed["Blended Pop Estimate"].mean()) if total > 0 else 0
+    avg_density = round(df_processed["Pop Density"].mean(), 2) if total > 0 else 0
     
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Total ZIP Codes", total)
@@ -447,7 +379,7 @@ if uploaded_file:
                 bitcoin_df = get_bitcoin_locations(lat, lng)
                 if len(bitcoin_df) > 0:
                     st.write(f"📍 **Bitcoin Locations Found: {len(bitcoin_df)}** (info only)")
-                    st.dataframe(bitcoin_df, use_container_width=True)
+                    st.dataframe(bitcoin_df, width='stretch')
                 
                 # Fetch nearby businesses (regular categories)
                 poi_df = get_pois(lat, lng)
@@ -455,7 +387,7 @@ if uploaded_file:
                 
                 # Process regular businesses ONLY (exclude Bitcoin ATMs from detail fetching)
                 if len(poi_df) > 0:
-                    st.dataframe(poi_df, use_container_width=True)
+                    st.dataframe(poi_df, width='stretch')
                     
                     # Fetch details for each business
                     for _, poi in poi_df.iterrows():
@@ -510,7 +442,7 @@ if uploaded_file:
                 # Show breakdown by category
                 st.write("**Breakdown by Category:**")
                 category_counts = final_df["Category"].value_counts()
-                st.dataframe(category_counts, use_container_width=True)
+                st.dataframe(category_counts, width='stretch')
                 
                 # Split results based on contact availability
                 # Has contact if either Phone or Owner Phones (Scraped) is not empty
@@ -532,7 +464,7 @@ if uploaded_file:
                 
                 with contact_tab1:
                     st.success(f"Businesses with contact information: {len(has_contact)}")
-                    st.dataframe(has_contact, use_container_width=True)
+                    st.dataframe(has_contact, width='stretch')
                     
                     if len(has_contact) > 0:
                         st.download_button(
@@ -544,7 +476,7 @@ if uploaded_file:
                 
                 with contact_tab2:
                     st.warning(f"Businesses without contact information: {len(no_contact)}")
-                    st.dataframe(no_contact, use_container_width=True)
+                    st.dataframe(no_contact, width='stretch')
                     
                     if len(no_contact) > 0:
                         st.download_button(
