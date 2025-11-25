@@ -1,146 +1,153 @@
 # 🤖 Bitcoin ATM Lead Qualification POC
 
-An **AI-powered Streamlit web app** that automatically filters and qualifies potential Bitcoin ATM locations using population data, competition levels, and simulated AI calling results.
-This helps identify the most promising ZIP codes before passing leads to sales teams.
+An end-to-end **AI-powered lead generation system** designed to identify high-potential business locations for installing Bitcoin ATMs.  
+The system evaluates client-provided ZIP codes, discovers nearby businesses using Google Places API, applies qualification filters, and uses an AI calling agent to confirm installation interest.
+
+This POC automates the entire **discovery → qualification → outreach** pipeline.
 
 ---
 
-## 🚀 Features
+## 🧨 Problem Statement
 
-✅ **Excel Upload (ZIP-based)**
-Upload an `.xlsx` file containing ZIP code data (and optional city, state, population metrics, etc.)
+The client wants to identify and contact businesses that may be interested in hosting a Bitcoin ATM.  
+For every ZIP code provided, the system must:
 
-✅ **Automated Filtering**
-Each ZIP is scored and filtered based on:
+- Fetch nearby businesses from categories relevant to kiosk placement:  
+  `gas_station`, `convenience_store`, `supermarket`, `liquor_store`, `pharmacy`, `jewelry_store`, `laundry`, `shopping_mall`, `restaurant`
+- Retrieve detailed business information using Google APIs (phone number, operating hours, address, ratings)
+- Apply qualification logic:
+  - Business must be open **≥12 hours/day**
+  - Must belong to approved categories
+  - Must have a valid phone number
+- Initiate outbound calls using an **AI voice agent** to confirm whether the business is willing to host a kiosk
+- Deliver only the **interested** leads to the client
 
-* Population threshold
-* Competitor ATM density
-* Simulated AI call results (lead interest)
+---
 
-✅ **AI Call Simulation**
-A mock agent determines if the lead shows "Interest" based on probabilistic scoring.
+## 🚀 Approach
 
-✅ **Dynamic DataFrame Views**
-See both:
+1. Client uploads or provides a list of ZIP codes.
+2. ZIPs are validated and filtered based on client rules.
+3. For each qualified ZIP:
+   - Convert ZIP → Latitude & Longitude using the Zippopotam API  
+   - Fetch nearby businesses using Google Places (Nearby Search)
+   - Enrich each business using Google Place Details API
+4. Apply business-level filters:
+   - Category match  
+   - Must operate at least 12 hours/day  
+   - Valid phone number retrieval  
+5. Export a clean CSV containing business information and contact numbers.
+6. Feed these businesses into an **AI calling agent**.
+7. AI agent tags the business response as:
+   - **Interested**
+   - **Not Interested**
+   - **Callback Requested**
+   - **Invalid / Unreachable**
+8. Final qualified leads (Interested only) are provided to the client.
 
-* **Qualified Leads** — likely high-performing areas
-* **Rejected Leads** — filtered with reasons for disqualification
+---
 
-✅ **Summary Dashboard**
-Quick KPIs like:
+## 🏗️ Technical Architecture
 
-* Total Leads
-* Qualified Count
-* Rejection Rate
-* Avg. ZIP Population
-* Avg. Competitor Count
-* Projected ROI Uplift
+The system follows a modular, end-to-end pipeline that transforms raw ZIP codes into fully verified Bitcoin ATM installation leads.  
+Below is the complete architecture described in structured text form.
 
-✅ **Interactive Display**
-All tables are scrollable and can be filtered directly in Streamlit.
+### **1. ZIP Intake & Pre-Filtering**
+The client uploads a list of ZIP codes through a Streamlit-based UI or CSV file.  
+A validation layer checks for formatting issues, duplicates, and applies client-defined filters (such as excluding restricted ZIPs or regions).  
+Only valid and allowed ZIPs move forward.
+
+### **2. Geolocation Resolution**
+Each ZIP code is converted into latitude and longitude coordinates using the **Zippopotam API**.  
+These coordinates are required for accurate business discovery in the next stage.
+
+### **3. Business Discovery (Google Places API)**
+Using the resolved geocoordinates, the system queries the **Google Places Nearby Search API** to fetch nearby businesses within a defined search radius.  
+Only businesses belonging to specific categories are considered:
+- gas_station  
+- convenience_store  
+- supermarket  
+- liquor_store  
+- pharmacy  
+- jewelry_store  
+- laundry  
+- shopping_mall  
+- restaurant  
+
+For each discovered business, the **Google Place Details API** retrieves additional details:
+- Contact number  
+- Operating hours  
+- Business rating  
+- Full address  
+- Google place_id  
+- Metadata such as website or photos (if available)
+
+### **4. Lead Qualification Engine**
+All discovered businesses pass through the rules-based qualification layer:
+- Business must be one of the approved categories  
+- Must be open for at least **12 hours per day** (based on `opening_hours`)  
+- Must have a valid phone number  
+- Additional optional filters may include minimum rating or brand-level exclusions  
+
+Only businesses that meet all criteria are considered qualified.
+
+### **5. Lead Packaging & CSV Generation**
+Qualified businesses are standardized, deduplicated, and exported into a structured CSV file.  
+Each row contains:
+- Business Name  
+- Category  
+- Phone Number  
+- Address  
+- Latitude & Longitude  
+- Rating  
+- Average Daily Open Hours  
+- Source ZIP  
+- place_id  
+
+This CSV becomes the input for the AI calling agent.
+
+### **6. AI Calling & Lead Verification**
+A voice AI calling agent (integrated via **Twilio or similar telephony provider**) contacts each qualified business.  
+The agent follows a kiosk-installation inquiry script and assigns a call outcome:
+- **Interested**  
+- **Not Interested**  
+- **Callback Requested**  
+- **Invalid / Unreachable**  
+
+Only the *Interested* leads step forward.
+
+### **7. Final Lead Delivery**
+All interested businesses are delivered to the client in the form of:
+- A final CSV  
+- Optional email delivery  
+- Optional CRM API webhook (future capability)
+
+This completes the pipeline from ZIP → business discovery → qualification → AI calling → final verified lead.
+
+
 
 ---
 
 ## 🧩 Tech Stack
 
-| Component             | Description                                    |
-| --------------------- | ---------------------------------------------- |
-| **Python 3.10+**      | Core programming language                      |
-| **Streamlit**         | Interactive web app framework                  |
-| **Pandas**            | Data manipulation and Excel parsing            |
-| **Folium** (optional) | Map visualization for qualified/rejected leads |
-| **Geopy** (optional)  | Geocoding support (currently commented out)    |
+| Component | Purpose |
+|----------|---------|
+| **Python** | Core backend logic & pipeline orchestration |
+| **Streamlit** | Front-end UI for ZIP upload & job execution |
+| **Zippopotam API** | ZIP → coordinates lookup |
+| **Google Places API** | Business discovery + details lookup |
+| **Pandas** | Data transformation + CSV generation |
+
 
 ---
 
-## 📂 File Upload Format
-
-Your Excel file should contain at least this column:
-
-* `zip_code`
-
-Optionally, it can also include:
-
-* `City`
-* `State`
-* `Blended Pop Estimate`
-* `Pop Density`
-* `total_kiosks`
-* `Margin`
-* `Location Analytics Flag`
-
-🧾 Example (Excel):
-
-| zip_code | City        | State | Blended Pop Estimate | Pop Density | total_kiosks |
-| -------- | ----------- | ----- | -------------------- | ----------- | ------------ |
-| 90001    | Los Angeles | CA    | 22500                | 1200        | 5            |
-| 73301    | Austin      | TX    | 38000                | 1800        | 1            |
+## 📂 Input Format
 
 ---
 
-## ⚙️ Configuration Parameters
-
-You can tweak these in the code to change filtering rules:
-
-```python
-POP_THRESHOLD = 10000         # Minimum population for qualification
-COMPETITOR_THRESHOLD = 2      # Max allowed nearby ATMs
-DISALLOWED_STATES = ["New York"]
-```
-
----
-
-## 💡 How It Works
-
-1. Upload an Excel file with ZIP code data.
-2. The app enriches each row with simulated:
-
-   * Population
-   * Competitor count
-   * AI call outcome
-3. Filtering logic classifies each lead as **Qualified** or **Rejected**.
-4. A detailed dashboard summarizes the results.
-
----
-
-## 📊 Output Sections
-
-* **Uploaded Leads** — Displays all uploaded data
-* **✅ Qualified Leads** — Leads that meet all thresholds
-* **❌ Rejected Leads** — Leads filtered out with detailed reasons
-* **📈 Summary Insights** — Metrics and calculated averages
-
----
-
-## 🧠 Future Enhancements
-
-* Integrate **real Census API** for accurate population data
-* Use **Google Places API** or **Yelp API** for competitor lookups
-* Replace simulated AI call logic with an **LLM-based interest classifier**
-* Enable **map visualization** with `folium` markers for approved/rejected ZIPs
-
----
+Upload a CSV with at least:
 
 ## 🧪 Run Locally
 
-### 1️⃣ Install Dependencies
-
 ```bash
-pip install streamlit pandas openpyxl geopy folium
-```
-
-### 2️⃣ Run the App
-
-```bash
-streamlit run app.py
-```
-
-### 3️⃣ Open in Browser
-
-Navigate to:
-
-```
-http://localhost:8501
-```
-
----
+pythone -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && streamlit run app.py
